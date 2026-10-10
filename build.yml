@@ -1,0 +1,1004 @@
+name: Build Card2Phone APK
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get the repository
+        uses: actions/checkout@v4
+
+      - name: Write the app files
+        run: |
+          set -e
+
+          mkdir -p "$(dirname "settings.gradle.kts")"
+          cat > "settings.gradle.kts" <<'__EOF__'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "Card2Phone"
+          include(":app")
+          __EOF__
+
+          mkdir -p "$(dirname "build.gradle.kts")"
+          cat > "build.gradle.kts" <<'__EOF__'
+          plugins {
+              id("com.android.application") version "8.5.2" apply false
+          }
+          __EOF__
+
+          mkdir -p "$(dirname "gradle.properties")"
+          cat > "gradle.properties" <<'__EOF__'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.nonTransitiveRClass=true
+          __EOF__
+
+          mkdir -p "$(dirname "app/build.gradle.kts")"
+          cat > "app/build.gradle.kts" <<'__EOF__'
+          plugins {
+              id("com.android.application")
+          }
+
+          android {
+              namespace = "com.card2phone.app"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "com.card2phone.app"
+                  minSdk = 24
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+
+              buildTypes {
+                  release {
+                      isMinifyEnabled = false
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+          }
+          __EOF__
+
+          mkdir -p "$(dirname "app/src/main/AndroidManifest.xml")"
+          cat > "app/src/main/AndroidManifest.xml" <<'__EOF__'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.VIBRATE" />
+              <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+              <application
+                  android:allowBackup="false"
+                  android:icon="@mipmap/ic_launcher"
+                  android:label="Card2Phone"
+                  android:theme="@android:style/Theme.Material.NoActionBar">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+                  <service
+                      android:name=".ShakeService"
+                      android:exported="false"
+                      android:foregroundServiceType="specialUse">
+                      <property
+                          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                          android:value="Shake detection that shows a card picture" />
+                  </service>
+
+                  <receiver
+                      android:name=".BootReceiver"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.BOOT_COMPLETED" />
+                      </intent-filter>
+                  </receiver>
+
+              </application>
+          </manifest>
+          __EOF__
+
+          mkdir -p "$(dirname "app/src/main/res/values/colors.xml")"
+          cat > "app/src/main/res/values/colors.xml" <<'__EOF__'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <color name="ic_bg">#0D1310</color>
+          </resources>
+          __EOF__
+
+          mkdir -p "$(dirname "app/src/main/res/drawable/ic_fg.xml")"
+          cat > "app/src/main/res/drawable/ic_fg.xml" <<'__EOF__'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path
+                  android:fillColor="#EED862"
+                  android:pathData="M38,28 L70,28 Q74,28 74,32 L74,76 Q74,80 70,80 L38,80 Q34,80 34,76 L34,32 Q34,28 38,28 Z" />
+              <path
+                  android:fillColor="#161208"
+                  android:pathData="M54,40 L62,54 L54,68 L46,54 Z" />
+          </vector>
+          __EOF__
+
+          mkdir -p "$(dirname "app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml")"
+          cat > "app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml" <<'__EOF__'
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@color/ic_bg" />
+              <foreground android:drawable="@drawable/ic_fg" />
+          </adaptive-icon>
+          __EOF__
+
+          mkdir -p "$(dirname "app/src/main/java/com/card2phone/app/BootReceiver.java")"
+          cat > "app/src/main/java/com/card2phone/app/BootReceiver.java" <<'__EOF__'
+          package com.card2phone.app;
+
+          import android.content.BroadcastReceiver;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
+
+          /** Turns shake detection back on after the phone restarts, if it was on before. */
+          public class BootReceiver extends BroadcastReceiver {
+              @Override
+              public void onReceive(Context context, Intent intent) {
+                  if (intent == null || !Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) {
+                      return;
+                  }
+                  SharedPreferences prefs = context.getSharedPreferences("card2phone", Context.MODE_PRIVATE);
+                  if (prefs.getBoolean("enabled", false)) {
+                      try {
+                          ShakeService.start(context, null);
+                      } catch (Exception ignored) {
+                          // The phone may refuse to start it this early. Opening the app starts it again.
+                      }
+                  }
+              }
+          }
+          __EOF__
+
+          mkdir -p "$(dirname "app/src/main/java/com/card2phone/app/ShakeService.java")"
+          cat > "app/src/main/java/com/card2phone/app/ShakeService.java" <<'__EOF__'
+          package com.card2phone.app;
+
+          import android.app.Notification;
+          import android.app.NotificationChannel;
+          import android.app.NotificationManager;
+          import android.app.PendingIntent;
+          import android.app.Service;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
+          import android.content.pm.ServiceInfo;
+          import android.graphics.Bitmap;
+          import android.graphics.BitmapFactory;
+          import android.graphics.PixelFormat;
+          import android.hardware.Sensor;
+          import android.hardware.SensorEvent;
+          import android.hardware.SensorEventListener;
+          import android.hardware.SensorManager;
+          import android.os.Build;
+          import android.os.IBinder;
+          import android.os.SystemClock;
+          import android.os.VibrationEffect;
+          import android.os.Vibrator;
+          import android.provider.Settings;
+          import android.util.DisplayMetrics;
+          import android.view.Gravity;
+          import android.view.MotionEvent;
+          import android.view.VelocityTracker;
+          import android.view.View;
+          import android.view.WindowManager;
+          import android.view.animation.AccelerateInterpolator;
+          import android.view.animation.OvershootInterpolator;
+          import android.widget.FrameLayout;
+          import android.widget.ImageView;
+
+          import java.io.File;
+
+          /**
+           * Runs in the background, feels for two firm shakes, and then draws the card
+           * on top of whatever is on screen (home screen included).
+           */
+          public class ShakeService extends Service implements SensorEventListener {
+
+              static final String ACTION_SHOW = "com.card2phone.app.SHOW";
+
+              private static final String CHANNEL_ID = "card2phone_shake";
+              private static final int NOTIF_ID = 1;
+
+              /** How hard a jolt must be, in g (1 g = the pull of gravity). Lower = easier to trigger. */
+              private static final double SHAKE_G = 2.4;
+
+              static File cardFile(Context c) {
+                  return new File(c.getFilesDir(), "card.img");
+              }
+
+              static void start(Context c, String action) {
+                  Intent i = new Intent(c, ShakeService.class);
+                  if (action != null) {
+                      i.setAction(action);
+                  }
+                  if (Build.VERSION.SDK_INT >= 26) {
+                      c.startForegroundService(i);
+                  } else {
+                      c.startService(i);
+                  }
+              }
+
+              static void stop(Context c) {
+                  c.stopService(new Intent(c, ShakeService.class));
+              }
+
+              private SensorManager sensors;
+              private WindowManager wm;
+              private SharedPreferences prefs;
+
+              private FrameLayout overlay;
+              private boolean flying;
+              private boolean listening;
+              private long lastJolt;
+              private long lastDismiss;
+              private int jolts;
+
+              @Override
+              public void onCreate() {
+                  super.onCreate();
+                  prefs = getSharedPreferences("card2phone", MODE_PRIVATE);
+                  wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+                  sensors = (SensorManager) getSystemService(SENSOR_SERVICE);
+                  createChannel();
+              }
+
+              @Override
+              public int onStartCommand(Intent intent, int flags, int startId) {
+                  Notification n = buildNotification();
+                  if (Build.VERSION.SDK_INT >= 34) {
+                      startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+                  } else {
+                      startForeground(NOTIF_ID, n);
+                  }
+
+                  boolean enabled = prefs.getBoolean("enabled", false);
+                  if (enabled && !listening) {
+                      Sensor accel = sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+                      if (accel != null) {
+                          listening = sensors.registerListener(this, accel, SensorManager.SENSOR_DELAY_GAME);
+                      }
+                  }
+
+                  if (intent != null && ACTION_SHOW.equals(intent.getAction())) {
+                      showCard();
+                  } else if (!enabled && overlay == null) {
+                      stopSelf();
+                  }
+                  return START_STICKY;
+              }
+
+              @Override
+              public void onDestroy() {
+                  if (listening) {
+                      sensors.unregisterListener(this);
+                      listening = false;
+                  }
+                  removeOverlay();
+                  super.onDestroy();
+              }
+
+              @Override
+              public IBinder onBind(Intent intent) {
+                  return null;
+              }
+
+              /* ---------------- shake detection ---------------- */
+
+              @Override
+              public void onSensorChanged(SensorEvent e) {
+                  float x = e.values[0] / SensorManager.GRAVITY_EARTH;
+                  float y = e.values[1] / SensorManager.GRAVITY_EARTH;
+                  float z = e.values[2] / SensorManager.GRAVITY_EARTH;
+                  double g = Math.sqrt(x * x + y * y + z * z);
+                  if (g < SHAKE_G) {
+                      return;
+                  }
+                  long now = SystemClock.elapsedRealtime();
+                  if (now - lastJolt < 180) {
+                      return; // still the same jolt
+                  }
+                  if (now - lastJolt > 1100) {
+                      jolts = 0; // too slow, start counting again
+                  }
+                  lastJolt = now;
+                  jolts++;
+                  if (jolts >= 2) {
+                      jolts = 0;
+                      if (overlay == null && now - lastDismiss > 1200) {
+                          showCard();
+                      }
+                  }
+              }
+
+              @Override
+              public void onAccuracyChanged(Sensor sensor, int accuracy) {
+              }
+
+              /* ---------------- the card on top of everything ---------------- */
+
+              private void showCard() {
+                  if (overlay != null) {
+                      return;
+                  }
+                  if (!Settings.canDrawOverlays(this)) {
+                      return;
+                  }
+                  Bitmap bmp = BitmapFactory.decodeFile(cardFile(this).getAbsolutePath());
+                  if (bmp == null) {
+                      return;
+                  }
+
+                  DisplayMetrics dm = getResources().getDisplayMetrics();
+                  final int sw = dm.widthPixels;
+                  final int sh = dm.heightPixels;
+
+                  float scale = Math.min(sw * 0.90f / bmp.getWidth(), sh * 0.86f / bmp.getHeight());
+                  int cw = Math.round(bmp.getWidth() * scale);
+                  int ch = Math.round(bmp.getHeight() * scale);
+
+                  FrameLayout root = new FrameLayout(this);
+                  root.setBackgroundColor(0xB3000000);
+                  root.setOnClickListener(v -> dismiss());
+
+                  final ImageView card = new ImageView(this);
+                  card.setImageBitmap(bmp);
+                  card.setScaleType(ImageView.ScaleType.FIT_XY);
+                  root.addView(card, new FrameLayout.LayoutParams(cw, ch, Gravity.CENTER));
+
+                  card.setOnTouchListener(new View.OnTouchListener() {
+                      private float downX;
+                      private float downY;
+                      private float baseX;
+                      private float baseY;
+                      private VelocityTracker tracker;
+
+                      @Override
+                      public boolean onTouch(View v, MotionEvent ev) {
+                          if (flying) {
+                              return true;
+                          }
+                          switch (ev.getActionMasked()) {
+                              case MotionEvent.ACTION_DOWN:
+                                  v.animate().cancel();
+                                  tracker = VelocityTracker.obtain();
+                                  tracker.addMovement(ev);
+                                  downX = ev.getRawX();
+                                  downY = ev.getRawY();
+                                  baseX = v.getTranslationX();
+                                  baseY = v.getTranslationY();
+                                  return true;
+
+                              case MotionEvent.ACTION_MOVE: {
+                                  if (tracker == null) {
+                                      return true;
+                                  }
+                                  tracker.addMovement(ev);
+                                  float tx = baseX + ev.getRawX() - downX;
+                                  float ty = baseY + ev.getRawY() - downY;
+                                  v.setTranslationX(tx);
+                                  v.setTranslationY(ty);
+                                  v.setRotation(tx * 0.03f);
+                                  v.setAlpha(0.45f + 0.55f * Math.min(1f, visibleFraction(v, sw, sh) / 0.6f));
+                                  return true;
+                              }
+
+                              case MotionEvent.ACTION_UP:
+                              case MotionEvent.ACTION_CANCEL: {
+                                  if (tracker == null) {
+                                      return true;
+                                  }
+                                  tracker.addMovement(ev);
+                                  tracker.computeCurrentVelocity(1000);
+                                  float vx = tracker.getXVelocity();
+                                  float vy = tracker.getYVelocity();
+                                  tracker.recycle();
+                                  tracker = null;
+                                  float speed = (float) Math.hypot(vx, vy);
+                                  if (speed > 1200f) {
+                                      flyOut(v, vx, vy, sw, sh);
+                                  } else if (visibleFraction(v, sw, sh) < 0.5f) {
+                                      flyOut(v, v.getTranslationX(), v.getTranslationY(), sw, sh);
+                                  } else {
+                                      v.animate()
+                                              .translationX(0f)
+                                              .translationY(0f)
+                                              .rotation(0f)
+                                              .alpha(1f)
+                                              .setDuration(350)
+                                              .setInterpolator(new OvershootInterpolator(1.2f))
+                                              .start();
+                                  }
+                                  return true;
+                              }
+                              default:
+                                  return true;
+                          }
+                      }
+                  });
+
+                  int type = Build.VERSION.SDK_INT >= 26
+                          ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                          : WindowManager.LayoutParams.TYPE_PHONE;
+                  WindowManager.LayoutParams wp = new WindowManager.LayoutParams(
+                          WindowManager.LayoutParams.MATCH_PARENT,
+                          WindowManager.LayoutParams.MATCH_PARENT,
+                          type,
+                          WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                                  | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                                  | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                          PixelFormat.TRANSLUCENT);
+                  if (Build.VERSION.SDK_INT >= 28) {
+                      wp.layoutInDisplayCutoutMode =
+                              WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+                  }
+
+                  card.setTranslationY(-sh);
+                  card.setRotation(-14f);
+                  card.setScaleX(0.8f);
+                  card.setScaleY(0.8f);
+                  card.setAlpha(0f);
+
+                  try {
+                      wm.addView(root, wp);
+                  } catch (Exception ex) {
+                      return;
+                  }
+                  overlay = root;
+                  flying = false;
+                  buzz();
+
+                  card.animate()
+                          .translationY(0f)
+                          .rotation(0f)
+                          .scaleX(1f)
+                          .scaleY(1f)
+                          .alpha(1f)
+                          .setDuration(600)
+                          .setInterpolator(new OvershootInterpolator(0.9f))
+                          .start();
+              }
+
+              private float visibleFraction(View v, int sw, int sh) {
+                  float l = v.getLeft() + v.getTranslationX();
+                  float t = v.getTop() + v.getTranslationY();
+                  float w = v.getWidth();
+                  float h = v.getHeight();
+                  if (w <= 0f || h <= 0f) {
+                      return 1f;
+                  }
+                  float ow = Math.max(0f, Math.min(l + w, sw) - Math.max(l, 0f));
+                  float oh = Math.max(0f, Math.min(t + h, sh) - Math.max(t, 0f));
+                  return (ow * oh) / (w * h);
+              }
+
+              private void flyOut(View v, float dx, float dy, int sw, int sh) {
+                  flying = true;
+                  float len = (float) Math.hypot(dx, dy);
+                  float ux;
+                  float uy;
+                  if (len < 1f) {
+                      ux = 0f;
+                      uy = -1f;
+                  } else {
+                      ux = dx / len;
+                      uy = dy / len;
+                  }
+                  float far = Math.max(sw, sh) * 1.3f;
+                  v.animate()
+                          .translationX(v.getTranslationX() + ux * far)
+                          .translationY(v.getTranslationY() + uy * far)
+                          .alpha(0f)
+                          .setDuration(380)
+                          .setInterpolator(new AccelerateInterpolator())
+                          .withEndAction(this::dismiss)
+                          .start();
+              }
+
+              private void removeOverlay() {
+                  if (overlay != null) {
+                      try {
+                          wm.removeView(overlay);
+                      } catch (Exception ignored) {
+                      }
+                      overlay = null;
+                  }
+                  flying = false;
+              }
+
+              private void dismiss() {
+                  removeOverlay();
+                  lastDismiss = SystemClock.elapsedRealtime();
+                  jolts = 0;
+                  if (!prefs.getBoolean("enabled", false)) {
+                      stopSelf();
+                  }
+              }
+
+              private void buzz() {
+                  try {
+                      Vibrator vib = (Vibrator) getSystemService(VIBRATOR_SERVICE);
+                      if (vib == null) {
+                          return;
+                      }
+                      if (Build.VERSION.SDK_INT >= 26) {
+                          vib.vibrate(VibrationEffect.createOneShot(40, VibrationEffect.DEFAULT_AMPLITUDE));
+                      } else {
+                          vib.vibrate(40);
+                      }
+                  } catch (Exception ignored) {
+                  }
+              }
+
+              /* ---------------- notification ---------------- */
+
+              private void createChannel() {
+                  if (Build.VERSION.SDK_INT >= 26) {
+                      NotificationChannel ch = new NotificationChannel(
+                              CHANNEL_ID, "Shake to show card", NotificationManager.IMPORTANCE_LOW);
+                      ch.setShowBadge(false);
+                      NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+                      if (nm != null) {
+                          nm.createNotificationChannel(ch);
+                      }
+                  }
+              }
+
+              private Notification buildNotification() {
+                  Intent open = new Intent(this, MainActivity.class);
+                  PendingIntent pi = PendingIntent.getActivity(
+                          this, 0, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+                  Notification.Builder b = Build.VERSION.SDK_INT >= 26
+                          ? new Notification.Builder(this, CHANNEL_ID)
+                          : new Notification.Builder(this);
+                  b.setSmallIcon(android.R.drawable.ic_menu_view)
+                          .setContentTitle("Card2Phone is on")
+                          .setContentText("Shake your phone to show your card.")
+                          .setContentIntent(pi)
+                          .setOngoing(true);
+                  return b.build();
+              }
+          }
+          __EOF__
+
+          mkdir -p "$(dirname "app/src/main/java/com/card2phone/app/MainActivity.java")"
+          cat > "app/src/main/java/com/card2phone/app/MainActivity.java" <<'__EOF__'
+          package com.card2phone.app;
+
+          import android.app.Activity;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
+          import android.content.pm.PackageManager;
+          import android.graphics.Bitmap;
+          import android.graphics.BitmapFactory;
+          import android.graphics.Color;
+          import android.graphics.Matrix;
+          import android.graphics.Typeface;
+          import android.graphics.drawable.GradientDrawable;
+          import android.media.ExifInterface;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.provider.Settings;
+          import android.view.ViewGroup;
+          import android.widget.Button;
+          import android.widget.ImageView;
+          import android.widget.LinearLayout;
+          import android.widget.ScrollView;
+          import android.widget.TextView;
+          import android.widget.Toast;
+
+          import java.io.File;
+          import java.io.FileOutputStream;
+          import java.io.IOException;
+          import java.io.InputStream;
+
+          /** The setup screen: pick the card picture, allow the overlay, turn shake on. */
+          public class MainActivity extends Activity {
+
+              private static final int REQ_PICK = 11;
+              private static final int REQ_NOTIF = 12;
+
+              private static final int BG = Color.parseColor("#0D1310");
+              private static final int PANEL = Color.parseColor("#151D18");
+              private static final int BRASS = Color.parseColor("#E6C36E");
+              private static final int BRASS_INK = Color.parseColor("#1B1608");
+              private static final int INK = Color.parseColor("#EEF1EA");
+              private static final int MUTED = Color.parseColor("#8B9C91");
+              private static final int LINE = Color.parseColor("#26332B");
+
+              private SharedPreferences prefs;
+              private ImageView preview;
+              private TextView stCard;
+              private TextView stOverlay;
+              private TextView stShake;
+              private Button btnShake;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  prefs = getSharedPreferences("card2phone", MODE_PRIVATE);
+                  getWindow().setStatusBarColor(BG);
+                  getWindow().setNavigationBarColor(BG);
+                  buildUi();
+              }
+
+              @Override
+              protected void onResume() {
+                  super.onResume();
+                  refresh();
+              }
+
+              /* ---------------- screen ---------------- */
+
+              private void buildUi() {
+                  ScrollView scroll = new ScrollView(this);
+                  scroll.setBackgroundColor(BG);
+                  scroll.setFillViewport(true);
+
+                  LinearLayout col = new LinearLayout(this);
+                  col.setOrientation(LinearLayout.VERTICAL);
+                  col.setPadding(dp(22), dp(28), dp(22), dp(32));
+                  scroll.addView(col, new ViewGroup.LayoutParams(
+                          ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+                  TextView title = text("card2phone", 32, INK, false);
+                  title.setTypeface(Typeface.create(Typeface.SERIF, Typeface.ITALIC));
+                  col.addView(title);
+
+                  TextView sub = text(
+                          "Shake your phone and your card pops up over whatever you are doing. "
+                                  + "Swipe it off the screen to hide it.", 15, MUTED, false);
+                  col.addView(sub, rowParams(0, 6));
+
+                  preview = new ImageView(this);
+                  preview.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                  GradientDrawable pbg = new GradientDrawable();
+                  pbg.setColor(PANEL);
+                  pbg.setCornerRadius(dp(16));
+                  preview.setBackground(pbg);
+                  preview.setPadding(dp(10), dp(10), dp(10), dp(10));
+                  LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(
+                          ViewGroup.LayoutParams.MATCH_PARENT, dp(240));
+                  plp.topMargin = dp(20);
+                  col.addView(preview, plp);
+
+                  stCard = text("", 15, INK, false);
+                  stOverlay = text("", 15, INK, false);
+                  stShake = text("", 15, INK, false);
+                  col.addView(stCard, rowParams(0, 18));
+                  col.addView(stOverlay, rowParams(0, 6));
+                  col.addView(stShake, rowParams(0, 6));
+
+                  col.addView(button("1.  Choose your card picture", true, v -> pickPicture()), buttonParams(18));
+                  col.addView(button("2.  Allow display over other apps", true, v -> openOverlaySettings()), buttonParams(10));
+                  btnShake = button("3.  Turn shake ON", true, v -> toggleShake());
+                  col.addView(btnShake, buttonParams(10));
+                  col.addView(button("Show my card now (test)", false, v -> testShow()), buttonParams(22));
+                  col.addView(button("Keep it running (battery settings)", false, v -> openBatterySettings()), buttonParams(10));
+
+                  TextView tip = text(
+                          "On Motorola phones, open the battery settings for Card2Phone and pick "
+                                  + "Unrestricted, or Android may switch shake off after a while.", 13, MUTED, false);
+                  col.addView(tip, rowParams(0, 14));
+
+                  setContentView(scroll);
+              }
+
+              private TextView text(String s, int sp, int color, boolean bold) {
+                  TextView t = new TextView(this);
+                  t.setText(s);
+                  t.setTextSize(sp);
+                  t.setTextColor(color);
+                  t.setLineSpacing(0f, 1.15f);
+                  if (bold) {
+                      t.setTypeface(Typeface.DEFAULT_BOLD);
+                  }
+                  return t;
+              }
+
+              private Button button(String label, boolean primary, android.view.View.OnClickListener click) {
+                  Button b = new Button(this);
+                  b.setText(label);
+                  b.setAllCaps(false);
+                  b.setTextSize(16);
+                  b.setTypeface(Typeface.DEFAULT_BOLD);
+                  b.setTextColor(primary ? BRASS_INK : INK);
+                  b.setStateListAnimator(null);
+                  GradientDrawable d = new GradientDrawable();
+                  d.setCornerRadius(dp(14));
+                  if (primary) {
+                      d.setColor(BRASS);
+                  } else {
+                      d.setColor(Color.TRANSPARENT);
+                      d.setStroke(dp(2), LINE);
+                  }
+                  b.setBackground(d);
+                  b.setOnClickListener(click);
+                  return b;
+              }
+
+              private LinearLayout.LayoutParams rowParams(int left, int top) {
+                  LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                          ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                  lp.leftMargin = dp(left);
+                  lp.topMargin = dp(top);
+                  return lp;
+              }
+
+              private LinearLayout.LayoutParams buttonParams(int top) {
+                  LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                          ViewGroup.LayoutParams.MATCH_PARENT, dp(54));
+                  lp.topMargin = dp(top);
+                  return lp;
+              }
+
+              private int dp(int v) {
+                  return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
+              }
+
+              private void toast(String s) {
+                  Toast.makeText(this, s, Toast.LENGTH_LONG).show();
+              }
+
+              /* ---------------- state ---------------- */
+
+              private File cardFile() {
+                  return ShakeService.cardFile(this);
+              }
+
+              private void refresh() {
+                  boolean hasCard = cardFile().exists();
+                  boolean canDraw = Settings.canDrawOverlays(this);
+                  boolean on = prefs.getBoolean("enabled", false);
+
+                  stCard.setText((hasCard ? "✓  " : "○  ") + "Card picture: " + (hasCard ? "saved" : "not chosen yet"));
+                  stOverlay.setText((canDraw ? "✓  " : "○  ") + "Display over other apps: " + (canDraw ? "allowed" : "not allowed yet"));
+                  stShake.setText((on ? "✓  " : "○  ") + "Shake: " + (on ? "on" : "off"));
+                  btnShake.setText(on ? "3.  Turn shake OFF" : "3.  Turn shake ON");
+
+                  if (hasCard) {
+                      BitmapFactory.Options o = new BitmapFactory.Options();
+                      o.inSampleSize = 2;
+                      Bitmap b = BitmapFactory.decodeFile(cardFile().getAbsolutePath(), o);
+                      preview.setImageBitmap(b);
+                  } else {
+                      preview.setImageDrawable(null);
+                  }
+              }
+
+              /* ---------------- buttons ---------------- */
+
+              private void pickPicture() {
+                  Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+                  i.setType("image/*");
+                  i.addCategory(Intent.CATEGORY_OPENABLE);
+                  startActivityForResult(Intent.createChooser(i, "Choose your card picture"), REQ_PICK);
+              }
+
+              private void openOverlaySettings() {
+                  try {
+                      Intent i = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                              Uri.parse("package:" + getPackageName()));
+                      startActivity(i);
+                  } catch (Exception e) {
+                      toast("Open Settings, search for \"Display over other apps\" and allow Card2Phone.");
+                  }
+              }
+
+              private void toggleShake() {
+                  boolean on = prefs.getBoolean("enabled", false);
+                  if (on) {
+                      prefs.edit().putBoolean("enabled", false).apply();
+                      ShakeService.stop(this);
+                  } else {
+                      if (!cardFile().exists()) {
+                          toast("Choose your card picture first.");
+                          return;
+                      }
+                      if (!Settings.canDrawOverlays(this)) {
+                          toast("Allow display over other apps first.");
+                          return;
+                      }
+                      if (Build.VERSION.SDK_INT >= 33
+                              && checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+                              != PackageManager.PERMISSION_GRANTED) {
+                          requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, REQ_NOTIF);
+                      }
+                      prefs.edit().putBoolean("enabled", true).apply();
+                      ShakeService.start(this, null);
+                      toast("Shake is on. Press Home and shake your phone twice.");
+                  }
+                  refresh();
+              }
+
+              private void testShow() {
+                  if (!cardFile().exists()) {
+                      toast("Choose your card picture first.");
+                      return;
+                  }
+                  if (!Settings.canDrawOverlays(this)) {
+                      toast("Allow display over other apps first.");
+                      return;
+                  }
+                  ShakeService.start(this, ShakeService.ACTION_SHOW);
+              }
+
+              private void openBatterySettings() {
+                  try {
+                      startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+                  } catch (Exception e) {
+                      toast("Open Settings, then Apps, then Card2Phone, then Battery, and pick Unrestricted.");
+                  }
+              }
+
+              /* ---------------- saving the picked picture ---------------- */
+
+              @Override
+              protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+                  super.onActivityResult(requestCode, resultCode, data);
+                  if (requestCode != REQ_PICK || resultCode != RESULT_OK || data == null || data.getData() == null) {
+                      return;
+                  }
+                  final Uri uri = data.getData();
+                  new Thread(() -> {
+                      try {
+                          Bitmap bmp = loadBitmap(uri);
+                          saveCard(bmp);
+                          runOnUiThread(() -> {
+                              refresh();
+                              toast("Card saved.");
+                          });
+                      } catch (Exception e) {
+                          runOnUiThread(() -> toast("Could not read that picture. Try another one."));
+                      }
+                  }).start();
+              }
+
+              private Bitmap loadBitmap(Uri uri) throws IOException {
+                  final int longSide = 2000;
+                  final int shortSide = 1280;
+
+                  BitmapFactory.Options bounds = new BitmapFactory.Options();
+                  bounds.inJustDecodeBounds = true;
+                  try (InputStream in = getContentResolver().openInputStream(uri)) {
+                      if (in == null) {
+                          throw new IOException("no stream");
+                      }
+                      BitmapFactory.decodeStream(in, null, bounds);
+                  }
+
+                  int sample = 1;
+                  while (Math.min(bounds.outWidth, bounds.outHeight) / (sample * 2) >= shortSide
+                          && Math.max(bounds.outWidth, bounds.outHeight) / (sample * 2) >= longSide) {
+                      sample *= 2;
+                  }
+
+                  BitmapFactory.Options opts = new BitmapFactory.Options();
+                  opts.inSampleSize = sample;
+                  Bitmap bmp;
+                  try (InputStream in = getContentResolver().openInputStream(uri)) {
+                      if (in == null) {
+                          throw new IOException("no stream");
+                      }
+                      bmp = BitmapFactory.decodeStream(in, null, opts);
+                  }
+                  if (bmp == null) {
+                      throw new IOException("could not decode");
+                  }
+
+                  int orientation = ExifInterface.ORIENTATION_NORMAL;
+                  try (InputStream in = getContentResolver().openInputStream(uri)) {
+                      if (in != null) {
+                          orientation = new ExifInterface(in).getAttributeInt(
+                                  ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
+                      }
+                  } catch (Exception ignored) {
+                  }
+                  Matrix m = new Matrix();
+                  boolean turn = true;
+                  if (orientation == ExifInterface.ORIENTATION_ROTATE_90) {
+                      m.postRotate(90);
+                  } else if (orientation == ExifInterface.ORIENTATION_ROTATE_180) {
+                      m.postRotate(180);
+                  } else if (orientation == ExifInterface.ORIENTATION_ROTATE_270) {
+                      m.postRotate(270);
+                  } else {
+                      turn = false;
+                  }
+                  if (turn) {
+                      bmp = Bitmap.createBitmap(bmp, 0, 0, bmp.getWidth(), bmp.getHeight(), m, true);
+                  }
+
+                  int big = Math.max(bmp.getWidth(), bmp.getHeight());
+                  int small = Math.min(bmp.getWidth(), bmp.getHeight());
+                  float s = Math.min(1f, Math.min((float) longSide / big, (float) shortSide / small));
+                  if (s < 1f) {
+                      bmp = Bitmap.createScaledBitmap(bmp,
+                              Math.round(bmp.getWidth() * s), Math.round(bmp.getHeight() * s), true);
+                  }
+                  return bmp;
+              }
+
+              private void saveCard(Bitmap bmp) throws IOException {
+                  try (FileOutputStream out = new FileOutputStream(cardFile())) {
+                      bmp.compress(bmp.hasAlpha() ? Bitmap.CompressFormat.PNG : Bitmap.CompressFormat.JPEG, 92, out);
+                  }
+              }
+          }
+          __EOF__
+
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Accept Android licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - name: Build the APK
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Keep the APK as a download
+        uses: actions/upload-artifact@v4
+        with:
+          name: Card2Phone-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Publish an easy download link
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk Card2Phone.apk
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest Card2Phone.apk --title "Card2Phone" --target "$GITHUB_SHA" --notes "Open this page on your phone, tap Card2Phone.apk, and install it."
